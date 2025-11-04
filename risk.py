@@ -87,7 +87,7 @@ def gs_dla(tla, V):
     if dla < 1:
         dla = 1
     return dla
-def gs_mexp(kexp, mcexp, delta, v=0, delta1=0, dt=0):
+def gs_mexp(kexp, mcexp, delta, v=0.0, delta1=0.0, dt=0.0):
     """
     Calculates the mexp value for the Gaussian 3D torus.
 

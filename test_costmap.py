@@ -9,7 +9,7 @@ def visualize_costmap():
     frame_id = 2  # Select the 100th frame for testing
     
     # Get all vehicle data for this frame
-    all_vehicle_data = record.get_all_frame_vehicle(frame_id)
+    all_vehicle_data = record.get_all_vehicle_data_in_frame(frame_id)
     ego_id = 2  # Assume ego_id is 1
     
     # Read background image

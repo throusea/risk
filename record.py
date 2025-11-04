@@ -1,10 +1,12 @@
 import os
+from typing import List
 import risk
 import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
 import cv2
 from Constant import RiskConstants
+from vehicle import VehicleState, VehicleTrajectory
 
 class Record:
     def __init__(self, iRecord):
@@ -37,47 +39,81 @@ class Record:
         self.isInfo = False
         self.bg_path = f'{dataPath}/{iRecord:02d}_highway.jpg'
 
-    def get_id_row(self, id, frame):
+    def get_vehicle_state_list_from_vehicle_data(self, multiple_vehicle_data_on_single_frame)-> List[VehicleState]: 
+        """
+        Generate vehicle state list from vehicle data in one frame.
+        """
+        vehicle_state_list = []
+        for row in multiple_vehicle_data_on_single_frame:
+            # Extract relevant data
+            vehicle_id = int(row[0])
+            x, y = row[1], row[2]
+            vx, vy = row[3], row[4]
+            length, width = row[5], row[6]
+            heading = row[7]
+            vehicle_state = VehicleState(-1, vehicle_id, x, y, vx, vy, length, width, heading)
+            vehicle_state_list.append(vehicle_state)
+        return vehicle_state_list
+    
+    def get_vehicle_trajectory_from_vehicle_data(self, single_vehicle_data_on_multiple_frames: np.ndarray) -> VehicleTrajectory:
+        """
+        Generate vehicle trajectory from vehicle data across multiple frames.
+        """
+        raise NotImplementedError
+        # vehicle_id = int(single_vehicle_data_on_multiple_frames[0, 1])
+        # states = []
+        # for row in single_vehicle_data_on_multiple_frames:
+        #     frame_id = int(row[0])
+        #     x, y = row[2], row[3]
+        #     vx, vy = row[6], row[7]
+        #     length, width = row[4], row[5]
+        #     heading = row[8]
+        #     vehicle_state = VehicleState(frame_id, vehicle_id, x, y, vx, vy, length, width, heading)
+        #     states.append(vehicle_state)
+        return VehicleTrajectory(vehicle_id, states)
+
+
+    def get_row_id(self, vehicle_id, frame):
         """
         Get the row index for a given vehicle id and frame.
         """
-        id = id - 1  # Adjust for Python's zero-based indexing
+        vehicle_id = vehicle_id - 1  # Adjust for Python's zero-based indexing
         if frame == -1:
-            return self.start_row_id[id]
-        idInitFrame = int(self.tracks_meta[id][3])
-        row = self.start_row_id[id] + frame - idInitFrame
-        if row < self.start_row_id[id]:
-            return self.start_row_id[id]
-        elif row >= self.start_row_id[id + 1]:
-            return self.start_row_id[id + 1] - 1
+            return self.start_row_id[vehicle_id]
+        idInitFrame = int(self.tracks_meta[vehicle_id][3])
+        row = self.start_row_id[vehicle_id] + frame - idInitFrame
+        if row < self.start_row_id[vehicle_id]:
+            return self.start_row_id[vehicle_id]
+        elif row >= self.start_row_id[vehicle_id + 1]:
+            return self.start_row_id[vehicle_id + 1] - 1
         return row
 
-    def get_data(self, id, startFrame, endFrame):
+    def get_one_vehicle_data(self, vehicle_id, startFrame, endFrame):
         """
         Get data for a given vehicle id between startFrame and endFrame.
         """
-        startRow = self.get_id_row(id, startFrame)
-        endRow = self.get_id_row(id, endFrame)
+        startRow = self.get_row_id(vehicle_id, startFrame)
+        endRow = self.get_row_id(vehicle_id, endFrame)
         return self.tracks[startRow:endRow + 1, :]
 
-    def get_data_from_id(self, id):
+    def get_all_vehicle_data_by_id(self, vehicle_id):
         """
         Get all data for a given vehicle id.
         """
-        if isinstance(id, (list, tuple)):
+        if isinstance(vehicle_id, (list, tuple)):
             print('err: id should be scalar')
-        startRow = self.get_id_row(id, -1)
-        endRow = self.get_id_row(id + 1, -1) - 1
+        startRow = self.get_row_id(vehicle_id, -1)
+        endRow = self.get_row_id(vehicle_id + 1, -1) - 1
         return self.tracks[startRow:endRow + 1, :]
 
-    def get_all_frame_vehicle(self, frame_id):
+    def get_all_vehicle_data_in_frame(self, frame_id):
         """
         Get all vehicles' data in a specific frame.
         """
         frame_data = []
         vehicle_ids = np.unique(self.tracks[self.tracks[:, 0] == frame_id, 1])
         for vehicle_id in vehicle_ids:
-            vehicle_data = self.get_data(int(vehicle_id), int(frame_id), int(frame_id))
+            vehicle_data = self.get_one_vehicle_data(int(vehicle_id), int(frame_id), int(frame_id))
             if vehicle_data.size > 0:
                 x = vehicle_data[0, 2]
                 y = vehicle_data[0, 3]
@@ -89,11 +125,14 @@ class Record:
                 frame_data.append([vehicle_id, x, y, vx, vy, bbox_length, bbox_width, heading])
         return np.array(frame_data)
 
+    # def calculate_risk_by_vehicle(self, vehicle: VehicleData):
+
     def calculate_risk(self, ego_id, frame_id):
         """
         Calculate risk for a specific vehicle (ego) in a specific frame.
+        计算某一帧中某一车辆的风险值
         """
-        ego_data = self.get_data(ego_id, frame_id, frame_id)
+        ego_data = self.get_one_vehicle_data(ego_id, frame_id, frame_id)
         if ego_data.size == 0:
             raise ValueError('Ego vehicle does not exist in the current frame')
 
@@ -101,34 +140,21 @@ class Record:
         ego_y = ego_data[0, 3]
         ego_vx = ego_data[0, 6]
         ego_vy = ego_data[0, 7]
-        ego_speed = np.sqrt(ego_vx ** 2 + ego_vy ** 2)
         ego_length = ego_data[0, 4]
         ego_width = ego_data[0, 5]
         ego_heading = 0.01 if ego_vx > 0 else 180.01
+        ege_vehicle = VehicleState(frame_id, ego_id, ego_x, ego_y, ego_vx, ego_vy, ego_length, ego_width, ego_heading)
 
         res = 1
         grid_x = np.arange(0, 1001, res)
         grid_y = np.arange(0, 101, res)
         X, Y = np.meshgrid(grid_x, grid_y)
 
-        delta_fut_h = (np.pi / 180) * RiskConstants.STEERING_ANGLE / RiskConstants.SR
-        phiv_a = (np.pi / 180) * ego_heading
-
-        delta = risk.gs_delta(delta_fut_h)
-        phiv = risk.gs_phiv(phiv_a)
-        dla = risk.gs_dla(RiskConstants.TLA, ego_speed)
-        R = risk.gs_R(RiskConstants.L, delta)
-        xc, yc = risk.gs_center(ego_x, ego_y, phiv, delta, R)
-        mexp1 = risk.gs_mexp(RiskConstants.KEXP1, RiskConstants.MCEXP, delta, ego_speed)
-        mexp2 = risk.gs_mexp(RiskConstants.KEXP2, RiskConstants.MCEXP, delta, ego_speed)
-        arc_len = risk.gs_arclen(X, Y, ego_x, ego_y, delta, xc, yc, R)
-        a = risk.gs_a(arc_len, RiskConstants.PAR1, dla)
-        sigma1 = risk.gs_sigma(arc_len, mexp1, RiskConstants.CEXP)
-        sigma2 = risk.gs_sigma(arc_len, mexp2, RiskConstants.CEXP)
-        z_prob = risk.gs_z(X, Y, xc, yc, R, a, sigma1, sigma2)
-
-        all_vehicles_data = self.get_all_frame_vehicle(frame_id)
-        scene_cost = risk.generate_scene_cost(X, Y, all_vehicles_data, ego_id)  # 修改为调用risk.py中的方法
+        z_prob = self.calculate_risk_probability(
+            ege_vehicle, X, Y
+        )
+        all_vehicles_data = self.get_all_vehicle_data_in_frame(frame_id)
+        scene_cost = risk.generate_scene_cost(X, Y, all_vehicles_data, ego_id)  # 计算碰撞代价分布
         risk_qrf = np.sum(z_prob)
         
         # return risk_qrf
@@ -139,51 +165,67 @@ class Record:
 
         return risk
 
+    def calculate_risk_probability(self, vehicle_state: VehicleState, X, Y):
+        """
+        计算单个车辆的风险概率分布
+
+        param vehicle_state: 车辆状态
+        param X: X 网格
+        param Y: Y 网格
+        """
+        x, y = vehicle_state.x, vehicle_state.y
+        speed = vehicle_state.speed
+
+        delta_fut_h = (np.pi / 180) * RiskConstants.STEERING_ANGLE / RiskConstants.SR
+        phiv_a = vehicle_state.phiv_a
+
+        delta = risk.gs_delta(delta_fut_h)
+        phiv = risk.gs_phiv(phiv_a)
+        dla = risk.gs_dla(RiskConstants.TLA, speed)
+        R = risk.gs_R(RiskConstants.L, delta)
+        xc, yc = risk.gs_center(x, y, phiv, delta, R)
+        mexp1 = risk.gs_mexp(RiskConstants.KEXP1, RiskConstants.MCEXP, delta, speed)
+        mexp2 = risk.gs_mexp(RiskConstants.KEXP2, RiskConstants.MCEXP, delta, speed)
+        arc_len = risk.gs_arclen(X, Y, x, y, delta, xc, yc, R)
+        a = risk.gs_a(arc_len, RiskConstants.PAR1, dla)
+        sigma1 = risk.gs_sigma(arc_len, mexp1, RiskConstants.CEXP)
+        sigma2 = risk.gs_sigma(arc_len, mexp2, RiskConstants.CEXP)
+        z_prob = risk.gs_z(X, Y, xc, yc, R, a, sigma1, sigma2)
+        return z_prob
+
     def draw_frame_risk(self, frame_id):
         """
         Draw the risk map for a specific frame and save as a PNG file.
         """
         # Constants for drawing
         res = 0.2  # Grid resolution
-        grid_x_start, grid_x_end = 0, 1001  # X-axis grid range from 0 to 1000
-        grid_y_start, grid_y_end = 0, 101   # Y-axis grid range from 0 to 100
+        grid_x_start, grid_x_end = 0, 1000  # X-axis grid range from 0 to 1000
+        grid_y_start, grid_y_end = 0, 100   # Y-axis grid range from 0 to 100
         fig_size = (16, 12)  # Figure size
         dpi = 300  # Image resolution
         ratio = 0.10106 * 4  # Scaling ratio
 
-        all_vehicles_data = self.get_all_frame_vehicle(frame_id)
+        all_vehicles_data = self.get_all_vehicle_data_in_frame(frame_id)
         if all_vehicles_data.size == 0:
             raise ValueError('No vehicles exist in the current frame')
 
         img = plt.imread(self.bg_path)
         img_height, img_width = img.shape[:2]
 
-        grid_x = np.arange(grid_x_start, grid_x_end, res)
-        grid_y = np.arange(grid_y_start, grid_y_end, res)
+        grid_x = np.arange(grid_x_start, grid_x_end + res, res)
+        grid_y = np.arange(grid_y_start, grid_y_end + res, res)
         X, Y = np.meshgrid(grid_x, grid_y)
+        # Loc (1, 0) = (X[0][1], Y[0][1])
+        # Loc (3, 4) = (X[4][3], Y[4][3])
         frame_risk = np.zeros_like(X)
 
-        for vehicle_data in all_vehicles_data:
-            vehicle_id, x, y, vx, vy, length, width, heading = vehicle_data
-            speed = np.sqrt(vx ** 2 + vy ** 2)
-            delta_fut_h = (np.pi / 180) * RiskConstants.STEERING_ANGLE / RiskConstants.SR
-            phiv_a = (np.pi / 180) * heading
+        vehicle_state_list = self.get_vehicle_state_list_from_vehicle_data(all_vehicles_data)
 
-            delta = risk.gs_delta(delta_fut_h)
-            phiv = risk.gs_phiv(phiv_a)
-            dla = risk.gs_dla(RiskConstants.TLA, speed)
-            R = risk.gs_R(RiskConstants.L, delta)
-            xc, yc = risk.gs_center(x, y, phiv, delta, R)
-            mexp1 = risk.gs_mexp(RiskConstants.KEXP1, RiskConstants.MCEXP, delta, speed)
-            mexp2 = risk.gs_mexp(RiskConstants.KEXP2, RiskConstants.MCEXP, delta, speed)
-            arc_len = risk.gs_arclen(X, Y, x, y, delta, xc, yc, R)
-            a = risk.gs_a(arc_len, RiskConstants.PAR1, dla)
-            sigma1 = risk.gs_sigma(arc_len, mexp1, RiskConstants.CEXP)
-            sigma2 = risk.gs_sigma(arc_len, mexp2, RiskConstants.CEXP)
-            Z_cur = risk.gs_z(X, Y, xc, yc, R, a, sigma1, sigma2)
-
-            frame_risk += Z_cur
-
+        for vehicle_state in vehicle_state_list:
+            # 计算风险值分布
+            Z_cur = self.calculate_risk_probability(vehicle_state, X, Y)
+            frame_risk += Z_cur # 通过叠加各车辆的风险值，
+            
         fig_size = (16, 12)  # Increase figure size
         dpi = 300  # Set high resolution
         fig, ax = plt.subplots(figsize=fig_size, dpi=dpi)
