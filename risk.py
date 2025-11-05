@@ -1,7 +1,10 @@
 
+from typing import List
 import numpy as np
 from scipy.interpolate import griddata
-from matplotlib.path import Path  
+from matplotlib.path import Path
+
+from vehicle import VehicleState  
 
 
 def gs_a(arc_len, par1, dla):
@@ -309,6 +312,55 @@ def get_rotated_rectangle_corners(x, y, width, height, angle):
     rotated_corners[1, :] += y
 
     return rotated_corners.T
+
+def generate_scene_cost_by_vehicle_states(grid_x, grid_y, all_vehicle_states: List[VehicleState], ego_id):
+    """
+    Generate scene cost map considering all vehicles (except ego vehicle) positions and motion states
+    
+    Args:
+        grid_x, grid_y (numpy.ndarray): Grid point coordinates
+        all_vehicle_data (list): List of all vehicle data
+        ego_id: Ego vehicle ID
+        
+    Returns:
+        numpy.ndarray: Scene cost map
+    """
+    grid_map = np.zeros_like(grid_x)
+    grid_points = np.column_stack((grid_x.ravel(), grid_y.ravel()))
+    
+    m = 1.5
+    car_weghit_cost = 10
+    pedestrian_weight_cost = 100  # pedestrian weight cost
+    
+    # ego info
+    for vehicle in all_vehicle_states:
+        if vehicle.vehicle_id == ego_id:
+            ego_vx, ego_vy = vehicle.vx, vehicle.vy
+
+    # vehicle info
+    for vehicle in all_vehicle_states:
+        id = vehicle.vehicle_id
+        x, y = vehicle.x, vehicle.y
+        vx, vy = vehicle.vx, vehicle.vy
+        length, width = vehicle.length, vehicle.width
+        heading = vehicle.heading
+        
+        # ego cost not considered
+        if id == ego_id:
+            continue
+
+        # corner points
+        corners = get_rotated_rectangle_corners(x, y, width, length, heading+90)
+        path = Path(corners)
+        inside = path.contains_points(grid_points)
+
+        # cost model
+        cost = m * 0.5 * ((vx - ego_vx) ** 2 + (vy - ego_vy) ** 2) * car_weghit_cost
+
+        # region cost
+        grid_map.ravel()[inside] = cost
+
+    return grid_map
 
 def generate_scene_cost(grid_x, grid_y, all_vehicle_data, ego_id):
     """

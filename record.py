@@ -143,27 +143,46 @@ class Record:
         ego_length = ego_data[0, 4]
         ego_width = ego_data[0, 5]
         ego_heading = 0.01 if ego_vx > 0 else 180.01
+
+        # 创建自车车辆对象
         ege_vehicle = VehicleState(frame_id, ego_id, ego_x, ego_y, ego_vx, ego_vy, ego_length, ego_width, ego_heading)
+
+        # 获取当前帧所有车辆数据
+        all_vehicles_data = self.get_all_vehicle_data_in_frame(frame_id)
+
+        all_vehicle_states = self.get_vehicle_state_list_from_vehicle_data(all_vehicles_data)
 
         res = 1
         grid_x = np.arange(0, 1001, res)
         grid_y = np.arange(0, 101, res)
         X, Y = np.meshgrid(grid_x, grid_y)
 
+        z, risk_qrf = self.calculate_risk_value(X, Y, all_vehicle_states, ege_vehicle)
+        print("risk:{},ego_qrf:{}".format(z, risk_qrf))
+
+        return risk, z, risk_qrf
+    
+    def calculate_risk_value(self, X, Y, all_vehicle_states: List[VehicleState], ego_vehicle: VehicleState):
+        """
+        计算单个车辆的风险值
+
+        param X: X 网格
+        param Y: Y 网格
+        param all_vehicle_states: 所有车辆状态列表
+        param ego_id: 自车 ID
+        """
+
         z_prob = self.calculate_risk_probability(
-            ege_vehicle, X, Y
+            ego_vehicle, X, Y
         )
-        all_vehicles_data = self.get_all_vehicle_data_in_frame(frame_id)
-        scene_cost = risk.generate_scene_cost(X, Y, all_vehicles_data, ego_id)  # 计算碰撞代价分布
+        scene_cost = risk.generate_scene_cost_by_vehicle_states(X, Y, all_vehicle_states, ego_vehicle.vehicle_id)
+        
         risk_qrf = np.sum(z_prob)
         
         # return risk_qrf
         # 计算量化感知风险
         z = np.dot(z_prob.flatten(), scene_cost.flatten())
-        
-        print("risk:{},ego_qrf:{}".format(z, risk_qrf))
-
-        return risk
+        return z, risk_qrf
 
     def calculate_risk_probability(self, vehicle_state: VehicleState, X, Y):
         """
@@ -219,9 +238,9 @@ class Record:
         # Loc (3, 4) = (X[4][3], Y[4][3])
         frame_risk = np.zeros_like(X)
 
-        vehicle_state_list = self.get_vehicle_state_list_from_vehicle_data(all_vehicles_data)
+        all_vehicle_states = self.get_vehicle_state_list_from_vehicle_data(all_vehicles_data)
 
-        for vehicle_state in vehicle_state_list:
+        for vehicle_state in all_vehicle_states:
             # 计算风险值分布
             Z_cur = self.calculate_risk_probability(vehicle_state, X, Y)
             frame_risk += Z_cur # 通过叠加各车辆的风险值，
